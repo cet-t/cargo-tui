@@ -67,7 +67,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          registry-url: "https://registry.npmjs.org"
+
+      # Write auth token directly to ~/.npmrc — most reliable across npm versions
+      - name: Authenticate to npm
+        run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
 
       - name: Download all binaries
         uses: actions/download-artifact@v4
@@ -115,8 +118,6 @@ jobs:
           for pkg in win32-x64 linux-x64 darwin-x64 darwin-arm64; do
             npm publish ./npm/$pkg --access public
           done
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       # Give the registry time to propagate before the main package resolves them
       - name: Wait for registry propagation
@@ -124,8 +125,6 @@ jobs:
 
       - name: Publish main package
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       # Also create a GitHub release with attached binaries
       - name: Create GitHub Release
