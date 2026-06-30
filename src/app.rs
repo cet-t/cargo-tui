@@ -265,8 +265,11 @@ impl App {
                     self.pkg_query.pop();
                     self.trigger_search();
                 }
+                KeyCode::Up => self.move_search_sel(-1),
+                KeyCode::Down => self.move_search_sel(1),
                 KeyCode::Char(c) => {
                     self.pkg_query.push(c);
+                    self.pkg_sel_search = 0;
                     self.trigger_search();
                 }
                 _ => {}
@@ -419,6 +422,19 @@ impl App {
                         self.run_cargo(vec!["add".into(), r.name]);
                     }
                 }
+            }
+        }
+    }
+
+    fn move_search_sel(&mut self, delta: i32) {
+        let n = self.pkg_results.len();
+        if n == 0 { return; }
+        let prev = self.pkg_sel_search;
+        self.pkg_sel_search = clamp_move(self.pkg_sel_search, delta, n);
+        if self.pkg_sel_search != prev {
+            self.pkg_detail_srch = None;
+            if let Some(r) = self.pkg_results.get(self.pkg_sel_search).cloned() {
+                self.fetch_detail(r.name, r.version, true);
             }
         }
     }
