@@ -28,6 +28,7 @@ struct Package {
     name: String,
 }
 
+/// Walk up from `start` until a directory containing `Cargo.toml` is found.
 pub fn find_root(start: PathBuf) -> Option<PathBuf> {
     let mut cur = start;
     loop {
@@ -41,6 +42,7 @@ pub fn find_root(start: PathBuf) -> Option<PathBuf> {
     }
 }
 
+/// Load workspace name and dependency list from `<root>/Cargo.toml`.
 pub fn load(root: &Path) -> Result<WorkspaceInfo, Error> {
     let content = std::fs::read_to_string(root.join("Cargo.toml"))?;
     let manifest: CargoToml = toml::from_str(&content)?;

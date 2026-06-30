@@ -1,4 +1,4 @@
-use crate::{app::{App, Event}, ui, workspace::WorkspaceInfo};
+use crate::{app::{App, Event}, config::KeyConfig, ui, workspace::WorkspaceInfo};
 use anyhow::Result;
 use crossterm::{
     event::{self, Event as CEvent, KeyEventKind},
@@ -9,8 +9,8 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{io, time::Duration};
 use tokio::sync::mpsc;
 
-pub async fn run(info: WorkspaceInfo) -> Result<()> {
-    // ── ターミナル初期化 ──────────────────────────────────────
+pub async fn run(info: WorkspaceInfo, key: KeyConfig) -> Result<()> {
+    // Terminal setup
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -18,10 +18,10 @@ pub async fn run(info: WorkspaceInfo) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
     terminal.hide_cursor()?;
 
-    // ── イベントチャネル ──────────────────────────────────────
+    // Event channel
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
 
-    // キーボード読み取りタスク
+    // Keyboard reader task
     let key_tx = tx.clone();
     tokio::spawn(async move {
         loop {
@@ -42,15 +42,15 @@ pub async fn run(info: WorkspaceInfo) -> Result<()> {
         }
     });
 
-    // ── アプリ ───────────────────────────────────────────────
-    let mut app = App::new(info, tx);
+    // App
+    let mut app = App::new(info, key, tx);
 
-    // インストール済みクレート先頭の詳細をプリフェッチ
+    // Pre-fetch detail for the first installed crate
     if let Some(dep) = app.pkg_deps.first().cloned() {
         app.fetch_detail(dep.name, dep.version, false);
     }
 
-    // ── メインループ ─────────────────────────────────────────
+    // Main loop
     loop {
         terminal.draw(|frame| ui::render(frame, &app))?;
 
@@ -63,7 +63,7 @@ pub async fn run(info: WorkspaceInfo) -> Result<()> {
         }
     }
 
-    // ── ターミナル復元 ────────────────────────────────────────
+    // Terminal restore
     terminal.show_cursor()?;
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;

@@ -1,7 +1,7 @@
 [package]
 name = "cargo-tui"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "A gitui-style TUI for cargo"
 license = "MIT"
 repository = "https://github.com/cet-t/cargo-tui"

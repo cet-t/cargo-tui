@@ -1,0 +1,13 @@
+{
+  "name": "@cargo-tui/darwin-arm64",
+  "version": "0.1.0",
+  "description": "cargo-tui binary for macOS ARM64 (Apple Silicon)",
+  "license": "MIT",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cet-t/cargo-tui"
+  },
+  "files": ["bin/cargo-tui"]
+}

@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            npm_pkg: win32-x64
+            bin: cargo-tui.exe
+
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            npm_pkg: linux-x64
+            bin: cargo-tui
+
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            npm_pkg: darwin-x64
+            bin: cargo-tui
+
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            npm_pkg: darwin-arm64
+            bin: cargo-tui
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Copy binary into npm package
+        shell: bash
+        run: |
+          mkdir -p npm/${{ matrix.npm_pkg }}/bin
+          cp target/${{ matrix.target }}/release/${{ matrix.bin }} \
+             npm/${{ matrix.npm_pkg }}/bin/${{ matrix.bin }}
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.npm_pkg }}
+          path: npm/${{ matrix.npm_pkg }}/bin/${{ matrix.bin }}
+
+  publish:
+    name: Publish to npm
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      # Place each binary into its npm package
+      - name: Stage binaries
+        run: |
+          for pkg in win32-x64 linux-x64 darwin-x64 darwin-arm64; do
+            mkdir -p npm/$pkg/bin
+            cp -r artifacts/$pkg/. npm/$pkg/bin/
+            chmod +x npm/$pkg/bin/* 2>/dev/null || true
+          done
+
+      # Sync version from git tag into all package.json files
+      - name: Set version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          node -e "
+            const fs = require('fs');
+            const pkgs = [
+              'package.json',
+              'npm/win32-x64/package.json',
+              'npm/linux-x64/package.json',
+              'npm/darwin-x64/package.json',
+              'npm/darwin-arm64/package.json',
+            ];
+            for (const p of pkgs) {
+              const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+              j.version = process.env.VERSION;
+              if (j.optionalDependencies) {
+                for (const k of Object.keys(j.optionalDependencies)) {
+                  j.optionalDependencies[k] = process.env.VERSION;
+                }
+              }
+              fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+            }
+          "
+        env:
+          VERSION: ${{ github.ref_name }}
+
+      # Publish platform packages first, then the main package
+      - name: Publish platform packages
+        run: |
+          for pkg in win32-x64 linux-x64 darwin-x64 darwin-arm64; do
+            npm publish npm/$pkg --access public
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish main package
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Also create a GitHub release with attached binaries
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*

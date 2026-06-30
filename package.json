@@ -1,0 +1,22 @@
+{
+  "name": "cargo-tui",
+  "version": "0.1.0",
+  "description": "A gitui-style TUI for cargo",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cet-t/cargo-tui"
+  },
+  "bin": {
+    "cargo-tui": "bin/cargo-tui.js"
+  },
+  "scripts": {
+    "build": "cargo build --release"
+  },
+  "optionalDependencies": {
+    "@cargo-tui/win32-x64":   "0.1.0",
+    "@cargo-tui/linux-x64":   "0.1.0",
+    "@cargo-tui/darwin-x64":  "0.1.0",
+    "@cargo-tui/darwin-arm64": "0.1.0"
+  }
+}

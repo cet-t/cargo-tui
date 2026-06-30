@@ -2,15 +2,15 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("Cargo.toml が見つかりません")]
+    #[error("Cargo.toml not found")]
     NoCargoToml,
 
-    #[error("IO エラー: {0}")]
+    #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("TOML パースエラー: {0}")]
+    #[error("TOML parse error: {0}")]
     Toml(#[from] toml::de::Error),
 
-    #[error("HTTP エラー: {0}")]
+    #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
 }

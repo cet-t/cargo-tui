@@ -1,4 +1,5 @@
 mod app;
+mod config;
 mod crates_io;
 mod error;
 mod runner;
@@ -11,21 +12,21 @@ use error::Error;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "cargo-tui", about = "gitui 風の cargo TUI")]
+#[command(name = "cargo-tui", about = "A gitui-style TUI for cargo")]
 struct Args {
-    /// Cargo.toml のパスを直接指定
+    /// Path to Cargo.toml (or its parent directory)
     #[arg(long, value_name = "PATH")]
     manifest_path: Option<PathBuf>,
+
+    /// Path to a config file (default: %APPDATA%\cargo-tui\config.toml on Windows,
+    /// ~/.config/cargo-tui/config.toml elsewhere)
+    #[arg(long, value_name = "FILE")]
+    config: Option<PathBuf>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // `cargo tui` として呼ばれると argv[1] == "tui" になるので除去
-    let mut raw: Vec<_> = std::env::args_os().collect();
-    if raw.get(1).map(|a| a == "tui").unwrap_or(false) {
-        raw.remove(1);
-    }
-    let args = Args::parse_from(raw);
+    let args = Args::parse();
 
     let root = match args.manifest_path {
         Some(p) => {
@@ -39,7 +40,8 @@ async fn main() -> anyhow::Result<()> {
             .ok_or(Error::NoCargoToml)?,
     };
 
+    let cfg = config::load(args.config.as_deref());
     let info = workspace::load(&root)?;
-    tui::run(info).await?;
+    tui::run(info, cfg.keys).await?;
     Ok(())
 }

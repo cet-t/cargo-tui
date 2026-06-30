@@ -10,8 +10,8 @@ pub enum RunnerEvent {
     Exit(i32),
 }
 
-/// cargo コマンドを非同期実行。出力は tx に送信される。
-/// 返値の sender に () を送ると強制終了。
+/// Spawn `cargo <args>` asynchronously and stream output lines to `tx`.
+/// Returns a oneshot sender; send `()` to kill the process.
 pub fn spawn(
     args: Vec<String>,
     cwd: PathBuf,
@@ -30,7 +30,7 @@ pub fn spawn(
         {
             Ok(c) => c,
             Err(e) => {
-                let _ = tx.send(RunnerEvent::Line(format!("Error: {}", e)));
+                let _ = tx.send(RunnerEvent::Line(format!("error: {}", e)));
                 let _ = tx.send(RunnerEvent::Exit(1));
                 return;
             }
@@ -63,7 +63,7 @@ pub fn spawn(
         tokio::select! {
             _ = kill_rx => {
                 let _ = child.kill().await;
-                let _ = tx.send(RunnerEvent::Line("[中断]".to_string()));
+                let _ = tx.send(RunnerEvent::Line("[killed]".to_string()));
                 let _ = tx.send(RunnerEvent::Exit(130));
             }
             status = child.wait() => {
@@ -78,7 +78,7 @@ pub fn spawn(
     kill_tx
 }
 
-/// ANSI エスケープシーケンスを除去
+/// Strip ANSI escape sequences from a string.
 fn strip_ansi(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();

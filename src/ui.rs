@@ -25,7 +25,7 @@ const WARN_STYLE: Style   = Style::new().fg(Color::Yellow);
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
-    // 全体: タブバー(3) / コンテンツ / ステータスバー(1)
+    // Layout: tabbar(3) / content / statusbar(1)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -46,7 +46,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     render_statusbar(frame, app, chunks[2]);
 }
 
-// ── タブバー ──────────────────────────────────────────────────
+// ── Tab bar ───────────────────────────────────────────────────
 
 fn render_tabbar(frame: &mut Frame, app: &App, area: Rect) {
     let titles = vec![
@@ -79,16 +79,16 @@ fn render_tabbar(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(tabs, area);
 }
 
-// ── ステータスバー ────────────────────────────────────────────
+// ── Status bar ────────────────────────────────────────────────
 
 fn render_statusbar(frame: &mut Frame, app: &App, area: Rect) {
     let text = if app.pkg_search_mode {
-        " 検索中: [Esc/Enter] 終了  [BS] 削除".to_string()
+        " Searching: [Esc/Enter] done  [BS] delete".to_string()
     } else if app.running {
-        " 実行中…  [K] 強制終了".to_string()
+        " Running...  [K] kill".to_string()
     } else {
         match app.tab {
-            Tab::Package => " [s] 検索  [Enter] Add  [d] Remove  [Tab] Switch  [jk] Nav  [q] Quit".to_string(),
+            Tab::Package => " [s] Search  [Enter] Add  [d] Remove  [Tab] Switch  [jk] Nav  [q] Quit".to_string(),
             _            => " [Enter] Run  [r] Re-run  [K] Kill  []/[] Tab  [q] Quit".to_string(),
         }
     };
@@ -98,12 +98,12 @@ fn render_statusbar(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-// ── Build/Run タブ ────────────────────────────────────────────
+// ── Build/Run tab ─────────────────────────────────────────────
 
 fn render_build_run(frame: &mut Frame, app: &App, area: Rect) {
     let [left, right] = split_lr(area, 40);
 
-    // 左列: コマンドリスト
+    // Left: command list with section headers
     let mut items: Vec<ListItem> = vec![];
     let mut last_section = "";
     for cmd in BUILD_RUN_CMDS {
@@ -120,7 +120,7 @@ fn render_build_run(frame: &mut Frame, app: &App, area: Rect) {
         items.push(ListItem::new(format!("    {}", cmd.label)));
     }
 
-    // 選択インデックス → ListItem インデックスへ変換（セクションヘッダ分ずれる）
+    // Map command index to list item index (accounting for section headers)
     let list_idx = cmd_to_list_idx(app.br_sel, BUILD_RUN_CMDS);
     let mut state = ListState::default().with_selected(Some(list_idx));
     frame.render_stateful_widget(
@@ -132,11 +132,11 @@ fn render_build_run(frame: &mut Frame, app: &App, area: Rect) {
         &mut state,
     );
 
-    // 右列: 出力
+    // Right: output
     render_output(frame, app, right, " Output ");
 }
 
-// ── Test タブ ─────────────────────────────────────────────────
+// ── Test tab ──────────────────────────────────────────────────
 
 fn render_test(frame: &mut Frame, app: &App, area: Rect) {
     let [left, right] = split_lr(area, 40);
@@ -159,7 +159,7 @@ fn render_test(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
 
-    let list_idx = app.test_sel + 1; // COMMANDS ヘッダ分 +1
+    let list_idx = app.test_sel + 1; // +1 for COMMANDS header
     let mut state = ListState::default().with_selected(Some(list_idx));
     frame.render_stateful_widget(
         List::new(items)
@@ -173,15 +173,14 @@ fn render_test(frame: &mut Frame, app: &App, area: Rect) {
     render_output(frame, app, right, " Output ");
 }
 
-// ── Package タブ ──────────────────────────────────────────────
+// ── Package tab ───────────────────────────────────────────────
 
 fn render_package(frame: &mut Frame, app: &App, area: Rect) {
     let [left, right] = split_lr(area, 42);
 
-    // 左列: 上段(Installed) + 下段(Search) を縦に分割
+    // Left column: Installed (top 40%) + Search (bottom 60%)
     let total_h = left.height;
     let inst_h  = (total_h as f32 * 0.40).floor() as u16;
-    let _srch_h = total_h.saturating_sub(inst_h);
 
     let left_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -191,7 +190,7 @@ fn render_package(frame: &mut Frame, app: &App, area: Rect) {
     render_pkg_installed(frame, app, left_chunks[0]);
     render_pkg_search(frame, app, left_chunks[1]);
 
-    // 右列: フォーカス中セクションの詳細
+    // Right column: detail panel for the focused section
     let detail = match app.pkg_section {
         PkgSection::Installed => app.pkg_detail_inst.as_ref(),
         PkgSection::Search    => app.pkg_detail_srch.as_ref(),
@@ -211,7 +210,7 @@ fn render_pkg_installed(frame: &mut Frame, app: &App, area: Rect) {
         .pkg_deps
         .iter()
         .map(|d| {
-            ListItem::new(format!("  {:<20} {}", d.name, d.version))
+            ListItem::new(format!("  {:<28} {}", d.name, d.version))
         })
         .collect();
 
@@ -243,7 +242,7 @@ fn render_pkg_search(frame: &mut Frame, app: &App, area: Rect) {
         Style::default()
     };
 
-    // 検索バー行
+    // Inline search bar
     let search_bar = if app.pkg_search_mode {
         Line::from(vec![
             Span::raw("  Search: "),
@@ -257,12 +256,12 @@ fn render_pkg_search(frame: &mut Frame, app: &App, area: Rect) {
         ])
     };
 
-    // 結果リスト
+    // Result list
     let mut lines: Vec<Line> = vec![search_bar, Line::from("")];
     if app.pkg_loading {
-        lines.push(Line::from(Span::styled("  検索中…", MUTED_STYLE)));
+        lines.push(Line::from(Span::styled("  Searching...", MUTED_STYLE)));
     } else if app.pkg_results.is_empty() {
-        lines.push(Line::from(Span::styled("  (s で crates.io 検索)", MUTED_STYLE)));
+        lines.push(Line::from(Span::styled("  (press s to search crates.io)", MUTED_STYLE)));
     } else {
         for (i, r) in app.pkg_results.iter().enumerate() {
             let dl = fmt_downloads(r.downloads);
@@ -270,7 +269,7 @@ fn render_pkg_search(frame: &mut Frame, app: &App, area: Rect) {
             let line = Line::from(vec![
                 Span::raw(if is_sel { "▶ " } else { "  " }),
                 Span::styled(
-                    format!("{:<20} {:<10} ↓{}", r.name, r.version, dl),
+                    format!("{:<28} {:<14} ↓{}", r.name, r.version, dl),
                     if is_sel { SEL_STYLE } else { Style::default() },
                 ),
             ]);
@@ -278,7 +277,7 @@ fn render_pkg_search(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
 
-    let inner_h = area.height.saturating_sub(2) as usize; // border
+    let inner_h = area.height.saturating_sub(2) as usize; // subtract borders
     let scroll  = if active && app.pkg_sel_search + 3 > inner_h {
         (app.pkg_sel_search + 3 - inner_h) as u16
     } else {
@@ -303,7 +302,7 @@ fn render_pkg_detail(frame: &mut Frame, detail: Option<&CrateDetail>, area: Rect
 
     let Some(d) = detail else {
         frame.render_widget(
-            Paragraph::new(Span::styled("  (選択してください)", MUTED_STYLE)).block(block),
+            Paragraph::new(Span::styled("  (select an item)", MUTED_STYLE)).block(block),
             area,
         );
         return;
@@ -357,7 +356,7 @@ fn render_pkg_detail(frame: &mut Frame, detail: Option<&CrateDetail>, area: Rect
     );
 }
 
-// ── 出力パネル ────────────────────────────────────────────────
+// ── Output panel ──────────────────────────────────────────────
 
 fn render_output(frame: &mut Frame, app: &App, area: Rect, title: &str) {
     let lines: Vec<Line> = app
@@ -389,9 +388,9 @@ fn render_output(frame: &mut Frame, app: &App, area: Rect, title: &str) {
     );
 }
 
-// ── ユーティリティ ────────────────────────────────────────────
+// ── Utilities ─────────────────────────────────────────────────
 
-/// 左右に分割。left_pct% を左列に。
+/// Split area into left (left_pct%) and right columns.
 fn split_lr(area: Rect, left_pct: u16) -> [Rect; 2] {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -403,16 +402,16 @@ fn split_lr(area: Rect, left_pct: u16) -> [Rect; 2] {
     [chunks[0], chunks[1]]
 }
 
-/// コマンドインデックス → セクションヘッダを含む ListItem インデックス
+/// Convert a command index to the corresponding ListItem index (skipping section headers).
 fn cmd_to_list_idx(cmd_idx: usize, cmds: &[crate::app::Cmd]) -> usize {
     let mut offset = 0usize;
     let mut last_section = "";
     for (i, cmd) in cmds.iter().enumerate() {
         if cmd.section != last_section {
             if !last_section.is_empty() {
-                offset += 1; // セパレータ
+                offset += 1; // separator
             }
-            offset += 1; // ヘッダ
+            offset += 1; // header
             last_section = cmd.section;
         }
         if i == cmd_idx {
@@ -423,7 +422,7 @@ fn cmd_to_list_idx(cmd_idx: usize, cmds: &[crate::app::Cmd]) -> usize {
     offset
 }
 
-/// テキストを幅 w で単語折り返し
+/// Word-wrap `text` to lines of at most `width` characters.
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     if width == 0 { return vec![text.to_string()]; }
     let mut lines = vec![];

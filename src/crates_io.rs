@@ -4,6 +4,7 @@ use serde::Deserialize;
 pub struct CrateInfo {
     pub name: String,
     pub version: String,
+    #[allow(dead_code)]
     pub description: String,
     pub downloads: u64,
 }
@@ -24,7 +25,7 @@ pub struct DepInfo {
     pub req: String,
 }
 
-// ── serde 構造体 ──────────────────────────────────────────────
+// ── serde structs ─────────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct SearchResp {
@@ -80,7 +81,7 @@ struct DepItem {
     kind: String,
 }
 
-// ── API 関数 ──────────────────────────────────────────────────
+// ── API functions ─────────────────────────────────────────────
 
 fn client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -110,14 +111,13 @@ pub async fn search(query: &str, limit: usize) -> anyhow::Result<Vec<CrateInfo>>
         .collect())
 }
 
+/// Fetch crate metadata and its normal dependencies in parallel.
 pub async fn get_detail(name: &str, version: &str) -> anyhow::Result<CrateDetail> {
     let base = format!("https://crates.io/api/v1/crates/{}", name);
 
     let (meta_res, deps_res) = tokio::join!(
         client().get(&base).send(),
-        client()
-            .get(format!("{}/{}/dependencies", base, version))
-            .send()
+        client().get(format!("{}/{}/dependencies", base, version)).send()
     );
 
     let meta: MetaResp = meta_res?.json().await?;
