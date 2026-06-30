@@ -83,12 +83,13 @@ jobs:
             chmod +x npm/$pkg/bin/* 2>/dev/null || true
           done
 
-      # Sync version from git tag into all package.json files
+      # Sync version from git tag (strip leading "v") into all package.json files
       - name: Set version
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          node -e "
+          node - <<EOF
             const fs = require('fs');
+            const ver = '${VERSION}';
             const pkgs = [
               'package.json',
               'npm/win32-x64/package.json',
@@ -98,26 +99,28 @@ jobs:
             ];
             for (const p of pkgs) {
               const j = JSON.parse(fs.readFileSync(p, 'utf8'));
-              j.version = process.env.VERSION;
+              j.version = ver;
               if (j.optionalDependencies) {
                 for (const k of Object.keys(j.optionalDependencies)) {
-                  j.optionalDependencies[k] = process.env.VERSION;
+                  j.optionalDependencies[k] = ver;
                 }
               }
               fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
             }
-          "
-        env:
-          VERSION: ${{ github.ref_name }}
+          EOF
 
       # Publish platform packages first, then the main package
       - name: Publish platform packages
         run: |
           for pkg in win32-x64 linux-x64 darwin-x64 darwin-arm64; do
-            npm publish npm/$pkg --access public
+            npm publish ./npm/$pkg --access public
           done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Give the registry time to propagate before the main package resolves them
+      - name: Wait for registry propagation
+        run: sleep 30
 
       - name: Publish main package
         run: npm publish --access public
