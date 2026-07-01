@@ -67,6 +67,19 @@ fn render_tabbar(frame: &mut Frame, app: &App, area: Rect) {
         ]),
     ];
 
+    // Compute click ranges. ratatui Tabs renders each tab as
+    // pad_left(1) + title + pad_right(1), separated by a 1-col divider,
+    // starting at the block's inner left edge (area.x + 1).
+    let tab_specs = [Tab::BuildRun, Tab::Crate, Tab::Test];
+    let mut hits = Vec::with_capacity(3);
+    let mut cx = area.x + 1;
+    for (title, tab) in titles.iter().zip(tab_specs) {
+        let block_w = title.width() as u16 + 2; // padding on both sides
+        hits.push((cx, cx + block_w.saturating_sub(1), tab));
+        cx += block_w + 1; // divider column
+    }
+    *app.tab_hits.borrow_mut() = hits;
+
     let tabs = Tabs::new(titles)
         .select(app.tab as usize)
         .block(Block::default().borders(Borders::ALL).title(format!(" cargo-tui — {} ", app.ws_name)))
@@ -107,23 +120,30 @@ fn render_statusbar(frame: &mut Frame, app: &App, area: Rect) {
 
 fn render_build_run(frame: &mut Frame, app: &App, area: Rect) {
     let [left, right] = split_lr(area, 40);
+    app.area_left.set(left);
+    app.area_right.set(right);
 
     // Left: command list with section headers
     let mut items: Vec<ListItem> = vec![];
+    let mut rows: Vec<Option<usize>> = vec![]; // visual row -> command index
     let mut last_section = "";
-    for cmd in &app.build_run_cmds {
+    for (i, cmd) in app.build_run_cmds.iter().enumerate() {
         if cmd.section.as_str() != last_section {
             if !last_section.is_empty() {
                 items.push(ListItem::new(Line::from(Span::styled("  ─────────────────", MUTED_STYLE))));
+                rows.push(None);
             }
             items.push(ListItem::new(Line::from(Span::styled(
                 format!("  {}", cmd.section),
                 HEADER_STYLE,
             ))));
+            rows.push(None);
             last_section = cmd.section.as_str();
         }
         items.push(ListItem::new(format!("    {}", cmd.label)));
+        rows.push(Some(i));
     }
+    *app.left_rows.borrow_mut() = rows;
 
     // Map command index to list item index (accounting for section headers)
     let list_idx = cmd_to_list_idx(app.br_sel, &app.build_run_cmds);
@@ -145,12 +165,17 @@ fn render_build_run(frame: &mut Frame, app: &App, area: Rect) {
 
 fn render_test(frame: &mut Frame, app: &App, area: Rect) {
     let [left, right] = split_lr(area, 40);
+    app.area_left.set(left);
+    app.area_right.set(right);
 
     let mut items: Vec<ListItem> = vec![];
+    let mut rows: Vec<Option<usize>> = vec![None]; // COMMANDS header
     items.push(ListItem::new(Line::from(Span::styled("  COMMANDS", HEADER_STYLE))));
-    for cmd in &app.test_cmds {
+    for (i, cmd) in app.test_cmds.iter().enumerate() {
         items.push(ListItem::new(format!("    {}", cmd.label)));
+        rows.push(Some(i));
     }
+    *app.left_rows.borrow_mut() = rows;
 
     if !app.test_results.is_empty() {
         items.push(ListItem::new(Line::from(Span::styled("  ─────────────────", MUTED_STYLE))));
@@ -192,6 +217,9 @@ fn render_crate(frame: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Length(inst_h), Constraint::Min(0)])
         .split(left);
 
+    app.area_installed.set(left_chunks[0]);
+    app.area_search.set(left_chunks[1]);
+    app.area_right.set(right);
     render_pkg_installed(frame, app, left_chunks[0]);
     render_pkg_search(frame, app, left_chunks[1]);
 
@@ -214,6 +242,7 @@ fn render_pkg_installed(frame: &mut Frame, app: &App, area: Rect) {
     // Build the list grouped by dependency section, tracking where each
     // selectable crate row lands so the highlight maps to `pkg_sel_inst`.
     let mut items: Vec<ListItem> = vec![];
+    let mut rows: Vec<Option<usize>> = vec![]; // visual row -> dep index
     let mut sel_list_idx = 0usize;
     let mut last_kind: Option<crate::workspace::DepKind> = None;
     for (i, d) in app.pkg_deps.iter().enumerate() {
@@ -222,13 +251,16 @@ fn render_pkg_installed(frame: &mut Frame, app: &App, area: Rect) {
                 format!("  [{}]", d.kind.section()),
                 HEADER_STYLE,
             ))));
+            rows.push(None);
             last_kind = Some(d.kind);
         }
         if i == app.pkg_sel_inst {
             sel_list_idx = items.len();
         }
         items.push(ListItem::new(format!("    {:<26} {}", d.name, d.version)));
+        rows.push(Some(i));
     }
+    *app.inst_rows.borrow_mut() = rows;
     if items.is_empty() {
         items.push(ListItem::new(Line::from(Span::styled(
             "  (no dependencies)",
@@ -305,6 +337,17 @@ fn render_pkg_search(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         0
     };
+
+    // Map visual rows to result indices (results start at content line 2).
+    let mut rows: Vec<Option<usize>> = Vec::with_capacity(inner_h);
+    for vr in 0..inner_h {
+        let content = vr + scroll as usize;
+        rows.push(match content.checked_sub(2) {
+            Some(i) if i < app.pkg_results.len() => Some(i),
+            _ => None,
+        });
+    }
+    *app.search_rows.borrow_mut() = rows;
 
     frame.render_widget(
         Paragraph::new(Text::from(lines))

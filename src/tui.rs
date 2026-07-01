@@ -1,7 +1,9 @@
 use crate::{app::{App, Event}, config::KeyConfig, ui, workspace::WorkspaceInfo};
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event as CEvent, KeyEventKind},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event as CEvent, KeyEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -13,7 +15,7 @@ pub async fn run(info: WorkspaceInfo, key: KeyConfig) -> Result<()> {
     // Terminal setup
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     terminal.hide_cursor()?;
@@ -26,12 +28,18 @@ pub async fn run(info: WorkspaceInfo, key: KeyConfig) -> Result<()> {
     tokio::spawn(async move {
         loop {
             if event::poll(Duration::from_millis(16)).unwrap_or(false) {
-                if let Ok(CEvent::Key(key)) = event::read() {
-                    if key.kind == KeyEventKind::Press {
+                match event::read() {
+                    Ok(CEvent::Key(key)) if key.kind == KeyEventKind::Press => {
                         if key_tx.send(Event::Key(key)).is_err() {
                             break;
                         }
                     }
+                    Ok(CEvent::Mouse(m)) => {
+                        if key_tx.send(Event::Mouse(m)).is_err() {
+                            break;
+                        }
+                    }
+                    _ => {}
                 }
             }
             // Tick
@@ -66,7 +74,7 @@ pub async fn run(info: WorkspaceInfo, key: KeyConfig) -> Result<()> {
     // Terminal restore
     terminal.show_cursor()?;
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
 
     Ok(())
 }

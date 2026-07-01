@@ -4,8 +4,9 @@ use crate::{
     runner::RunnerEvent,
     workspace::{Dep, DepKind, RunKind, RunTarget, WorkspaceInfo},
 };
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use std::cell::Cell;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::Rect;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use tokio::sync::{mpsc, oneshot};
 
@@ -154,6 +155,7 @@ pub fn test_cmds() -> Vec<Cmd> {
 
 pub enum Event {
     Key(KeyEvent),
+    Mouse(MouseEvent),
     Runner(RunnerEvent),
     SearchResult(Vec<CrateInfo>),
     DetailResult(bool /* is_search */, CrateDetail),
@@ -186,6 +188,18 @@ pub struct App {
     /// so scrolling can be clamped accurately.
     pub right_view_lines:    Cell<u16>,
     pub right_content_lines: Cell<u16>,
+
+    // Hit-test regions and row maps, refreshed every render for mouse support.
+    pub area_left:      Cell<Rect>,
+    pub area_right:     Cell<Rect>,
+    pub area_installed: Cell<Rect>,
+    pub area_search:    Cell<Rect>,
+    /// Tab bar click ranges: (start_x, end_x inclusive, tab).
+    pub tab_hits: RefCell<Vec<(u16, u16, Tab)>>,
+    /// Visual-row (from list inner top) -> selectable index, per left list.
+    pub left_rows:   RefCell<Vec<Option<usize>>>,
+    pub inst_rows:   RefCell<Vec<Option<usize>>>,
+    pub search_rows: RefCell<Vec<Option<usize>>>,
 
     // Command lists (Build/Run resolves against detected bin targets)
     pub build_run_cmds: Vec<Cmd>,
@@ -230,6 +244,14 @@ impl App {
             h_scroll: 0,
             right_view_lines:    Cell::new(0),
             right_content_lines: Cell::new(0),
+            area_left:      Cell::new(Rect::default()),
+            area_right:     Cell::new(Rect::default()),
+            area_installed: Cell::new(Rect::default()),
+            area_search:    Cell::new(Rect::default()),
+            tab_hits:    RefCell::new(vec![]),
+            left_rows:   RefCell::new(vec![]),
+            inst_rows:   RefCell::new(vec![]),
+            search_rows: RefCell::new(vec![]),
             build_run_cmds: build_run_cmds(&info.targets),
             test_cmds:      test_cmds(),
             br_sel:       0,
@@ -393,6 +415,100 @@ impl App {
             }
 
             Event::Key(key) => self.handle_key(key),
+
+            Event::Mouse(m) => self.handle_mouse(m),
+        }
+    }
+
+    // ── Mouse handling ────────────────────────────────────────
+
+    fn handle_mouse(&mut self, m: MouseEvent) {
+        let (x, y) = (m.column, m.row);
+        match m.kind {
+            // Wheel: scroll the right pane if the cursor is over it, otherwise
+            // move the selection in the left list.
+            MouseEventKind::ScrollDown => {
+                if rect_contains(self.area_right.get(), x, y) {
+                    if self.focus != Focus::Right { self.focus_right(); }
+                    self.scroll_v(3);
+                } else {
+                    self.move_sel(1);
+                }
+            }
+            MouseEventKind::ScrollUp => {
+                if rect_contains(self.area_right.get(), x, y) {
+                    if self.focus != Focus::Right { self.focus_right(); }
+                    self.scroll_v(-3);
+                } else {
+                    self.move_sel(-1);
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) => self.handle_click(x, y),
+            _ => {}
+        }
+    }
+
+    fn handle_click(&mut self, x: u16, y: u16) {
+        // Tab bar.
+        let clicked_tab = if y <= 2 {
+            self.tab_hits
+                .borrow()
+                .iter()
+                .copied()
+                .find(|(start, end, _)| x >= *start && x <= *end)
+                .map(|(_, _, tab)| tab)
+        } else {
+            None
+        };
+        if let Some(tab) = clicked_tab {
+            self.switch_tab(tab);
+            return;
+        }
+
+        // Right pane: take focus for scrolling.
+        if rect_contains(self.area_right.get(), x, y) {
+            self.focus_right();
+            return;
+        }
+
+        // Left column: select the clicked row.
+        match self.tab {
+            Tab::BuildRun => {
+                if let Some(i) = row_at(&self.area_left, &self.left_rows, x, y) {
+                    self.focus = Focus::Left;
+                    self.br_sel = i;
+                }
+            }
+            Tab::Test => {
+                // Test tab reuses `left_rows` (only one left list renders at a time).
+                if let Some(i) = row_at(&self.area_left, &self.left_rows, x, y) {
+                    self.focus = Focus::Left;
+                    self.test_sel = i;
+                }
+            }
+            Tab::Crate => {
+                if let Some(i) = row_at(&self.area_installed, &self.inst_rows, x, y) {
+                    self.focus = Focus::Left;
+                    self.pkg_section = PkgSection::Installed;
+                    if self.pkg_sel_inst != i {
+                        self.pkg_sel_inst = i;
+                        self.pkg_detail_inst = None;
+                        if let Some(d) = self.pkg_deps.get(i).cloned() {
+                            self.fetch_detail(d.name, d.version, false);
+                        }
+                    }
+                } else if let Some(i) = row_at(&self.area_search, &self.search_rows, x, y) {
+                    self.focus = Focus::Left;
+                    self.pkg_section = PkgSection::Search;
+                    if self.pkg_sel_search != i {
+                        self.pkg_sel_search = i;
+                        self.pkg_detail_srch = None;
+                        if let Some(r) = self.pkg_results.get(i).cloned() {
+                            self.fetch_detail(r.name, r.version, true);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -645,6 +761,27 @@ fn clamp_move(cur: usize, delta: i32, len: usize) -> usize {
     (cur as i32 + delta).max(0).min(len as i32 - 1) as usize
 }
 
+/// True if the point (x, y) lies inside `r`.
+fn rect_contains(r: Rect, x: u16, y: u16) -> bool {
+    x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height
+}
+
+/// Map a click to a selectable index within a bordered list `area`, using the
+/// row map built during render. The first inner row sits at `area.y + 1`.
+fn row_at(
+    area: &Cell<Rect>,
+    rows: &RefCell<Vec<Option<usize>>>,
+    x: u16,
+    y: u16,
+) -> Option<usize> {
+    let r = area.get();
+    if !rect_contains(r, x, y) {
+        return None;
+    }
+    let row = y.checked_sub(r.y + 1)? as usize;
+    rows.borrow().get(row).copied().flatten()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -690,6 +827,29 @@ mod tests {
         assert_eq!(app.v_scroll, 85);
         app.scroll_v(-1000);        // clamped at top
         assert_eq!(app.v_scroll, 0);
+    }
+
+    #[test]
+    fn rect_contains_bounds() {
+        let r = Rect { x: 2, y: 3, width: 4, height: 5 };
+        assert!(rect_contains(r, 2, 3));   // top-left corner
+        assert!(rect_contains(r, 5, 7));   // bottom-right inclusive
+        assert!(!rect_contains(r, 6, 3));  // x == right edge (exclusive)
+        assert!(!rect_contains(r, 1, 3));  // left of area
+        assert!(!rect_contains(r, 2, 8));  // below area
+    }
+
+    #[test]
+    fn row_at_maps_click_to_index() {
+        let area = Cell::new(Rect { x: 0, y: 0, width: 10, height: 10 });
+        let rows = RefCell::new(vec![None, Some(0), Some(1), None, Some(2)]);
+        assert_eq!(row_at(&area, &rows, 1, 0), None);    // border row
+        assert_eq!(row_at(&area, &rows, 1, 1), None);    // header
+        assert_eq!(row_at(&area, &rows, 1, 2), Some(0));
+        assert_eq!(row_at(&area, &rows, 1, 3), Some(1));
+        assert_eq!(row_at(&area, &rows, 1, 4), None);    // separator/header
+        assert_eq!(row_at(&area, &rows, 1, 5), Some(2));
+        assert_eq!(row_at(&area, &rows, 50, 2), None);   // outside x
     }
 
     #[test]
