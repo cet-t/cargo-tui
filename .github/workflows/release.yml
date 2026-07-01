@@ -57,13 +57,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # registry-url is required: setup-node writes NPM_CONFIG_USERCONFIG pointing
-      # to a temp .npmrc that contains "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}".
-      # NODE_AUTH_TOKEN must be in env when npm runs so it can expand that placeholder.
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          registry-url: "https://registry.npmjs.org"
+
+      # Write auth token directly to ~/.npmrc — more reliable than setup-node's
+      # ${NODE_AUTH_TOKEN} placeholder expansion (which fails with npm 10+).
+      - name: Configure npm auth
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Download all binaries
         uses: actions/download-artifact@v4
@@ -103,9 +106,7 @@ jobs:
             }
           "
 
-      # Publish platform packages, then wait for propagation, then publish the main package.
-      # NODE_AUTH_TOKEN must be set here so npm can expand the ${NODE_AUTH_TOKEN} placeholder
-      # that setup-node wrote into NPM_CONFIG_USERCONFIG.
+      # Publish platform packages first, wait for propagation, then publish root.
       - name: Publish to npm
         run: |
           for pkg in win32-x64 linux-x64 darwin-x64 darwin-arm64; do
@@ -114,8 +115,6 @@ jobs:
           echo "Waiting 30s for registry propagation..."
           sleep 30
           npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
