@@ -83,7 +83,7 @@ fn render_tabbar(frame: &mut Frame, app: &App, area: Rect) {
 
 fn render_statusbar(frame: &mut Frame, app: &App, area: Rect) {
     let text = if app.pkg_search_mode {
-        " Searching: [Esc/Enter] done  [BS] delete".to_string()
+        " Search: [Enter] run  [Esc] done  [BS] delete".to_string()
     } else if app.focus == Focus::Right {
         " Scroll: [hjkl] move  [h] back to list".to_string()
     } else if app.running {

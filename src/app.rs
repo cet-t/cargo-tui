@@ -379,18 +379,18 @@ impl App {
             return;
         }
 
-        // In search mode: text input + arrow navigation
+        // In search mode: edit the query, run the search only on Enter.
         if self.pkg_search_mode {
             match key.code {
-                KeyCode::Esc | KeyCode::Enter => { self.pkg_search_mode = false; }
-                KeyCode::Backspace => { self.pkg_query.pop(); self.trigger_search(); }
-                KeyCode::Up        => self.move_search_sel(-1),
-                KeyCode::Down      => self.move_search_sel(1),
-                KeyCode::Char(c)   => {
-                    self.pkg_query.push(c);
+                KeyCode::Esc       => { self.pkg_search_mode = false; }
+                KeyCode::Enter     => {
                     self.pkg_sel_search = 0;
                     self.trigger_search();
                 }
+                KeyCode::Backspace => { self.pkg_query.pop(); }
+                KeyCode::Up        => self.move_search_sel(-1),
+                KeyCode::Down      => self.move_search_sel(1),
+                KeyCode::Char(c)   => { self.pkg_query.push(c); }
                 _ => {}
             }
             return;
