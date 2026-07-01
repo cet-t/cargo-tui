@@ -102,7 +102,7 @@ pub struct KeyConfig {
     pub quit:       KeyBind,
     /// Switch to Build/Run tab
     pub tab_1:      KeyBind,
-    /// Switch to Package tab
+    /// Switch to Crate tab
     pub tab_2:      KeyBind,
     /// Switch to Test tab
     pub tab_3:      KeyBind,
@@ -120,12 +120,14 @@ pub struct KeyConfig {
     pub rerun:      KeyBind,
     /// Kill the running process
     pub kill:       KeyBind,
-    /// Open inline search (Package tab)
+    /// Open inline search (Crate tab)
     pub pkg_search: KeyBind,
-    /// Remove the selected installed crate (Package tab)
+    /// Remove the selected installed crate (Crate tab)
     pub pkg_remove: KeyBind,
-    /// Toggle between Installed / Search sections (Package tab)
+    /// Toggle between Installed / Search sections (Crate tab)
     pub pkg_toggle: KeyBind,
+    /// Cycle the target dependency section for adding (Crate tab)
+    pub pkg_profile: KeyBind,
 }
 
 impl Default for KeyConfig {
@@ -145,6 +147,7 @@ impl Default for KeyConfig {
             pkg_search: KeyBind::char('s'),
             pkg_remove: KeyBind::char('d'),
             pkg_toggle: KeyBind::code(KeyCode::Tab),
+            pkg_profile: KeyBind::char('p'),
         }
     }
 }

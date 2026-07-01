@@ -2,10 +2,39 @@ use crate::error::Error;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+/// Which Cargo.toml dependency section a crate belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DepKind {
+    Normal,
+    Dev,
+    Build,
+}
+
+impl DepKind {
+    /// Section header as written in Cargo.toml.
+    pub fn section(self) -> &'static str {
+        match self {
+            DepKind::Normal => "dependencies",
+            DepKind::Dev    => "dev-dependencies",
+            DepKind::Build  => "build-dependencies",
+        }
+    }
+
+    /// The `cargo add` / `cargo remove` flag for this section (empty for normal).
+    pub fn flag(self) -> Option<&'static str> {
+        match self {
+            DepKind::Normal => None,
+            DepKind::Dev    => Some("--dev"),
+            DepKind::Build  => Some("--build"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Dep {
     pub name: String,
     pub version: String,
+    pub kind: DepKind,
 }
 
 /// Kind of a runnable cargo target.
@@ -37,6 +66,8 @@ struct CargoToml {
     dependencies: Option<toml::Table>,
     #[serde(rename = "dev-dependencies")]
     dev_dependencies: Option<toml::Table>,
+    #[serde(rename = "build-dependencies")]
+    build_dependencies: Option<toml::Table>,
 }
 
 #[derive(Deserialize)]
@@ -69,10 +100,13 @@ pub fn load(root: &Path) -> Result<WorkspaceInfo, Error> {
         .unwrap_or_else(|| root.file_name().unwrap_or_default().to_string_lossy().into());
 
     let mut deps = Vec::new();
-    for table in [&manifest.dependencies, &manifest.dev_dependencies]
-        .into_iter()
-        .flatten()
-    {
+    let sections = [
+        (DepKind::Normal, &manifest.dependencies),
+        (DepKind::Dev,    &manifest.dev_dependencies),
+        (DepKind::Build,  &manifest.build_dependencies),
+    ];
+    for (kind, table) in sections {
+        let Some(table) = table else { continue };
         for (k, v) in table {
             let ver = match v {
                 toml::Value::String(s) => s.clone(),
@@ -83,10 +117,13 @@ pub fn load(root: &Path) -> Result<WorkspaceInfo, Error> {
                     .to_string(),
                 _ => continue,
             };
-            deps.push(Dep { name: k.clone(), version: ver });
+            deps.push(Dep { name: k.clone(), version: ver, kind });
         }
     }
-    deps.sort_by(|a, b| a.name.cmp(&b.name));
+    // Sort by section (normal, dev, build) then name so the grouped view is stable.
+    deps.sort_by(|a, b| {
+        (a.kind as u8, &a.name).cmp(&(b.kind as u8, &b.name))
+    });
 
     let targets = detect_targets(root);
 

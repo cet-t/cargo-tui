@@ -2,7 +2,7 @@ use crate::{
     config::KeyConfig,
     crates_io::{CrateDetail, CrateInfo},
     runner::RunnerEvent,
-    workspace::{Dep, RunKind, RunTarget, WorkspaceInfo},
+    workspace::{Dep, DepKind, RunKind, RunTarget, WorkspaceInfo},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
@@ -13,7 +13,7 @@ use tokio::sync::{mpsc, oneshot};
 #[derive(Clone, Copy, PartialEq)]
 pub enum Tab {
     BuildRun = 0,
-    Package  = 1,
+    Crate    = 1,
     Test     = 2,
 }
 
@@ -181,10 +181,12 @@ pub struct App {
     pub test_results: Vec<TestResult>,
     pub kill_tx:      Option<oneshot::Sender<()>>,
 
-    // Package tab
+    // Crate tab
     pub pkg_section:     PkgSection,
     pub pkg_deps:        Vec<Dep>,
     pub pkg_sel_inst:    usize,
+    /// Target dependency section used when adding a crate from search.
+    pub pkg_add_kind:    DepKind,
     pub pkg_search_mode: bool,
     pub pkg_query:       String,
     pub pkg_results:     Vec<CrateInfo>,
@@ -216,6 +218,7 @@ impl App {
             pkg_section:     PkgSection::Installed,
             pkg_deps:        info.deps,
             pkg_sel_inst:    0,
+            pkg_add_kind:    DepKind::Normal,
             pkg_search_mode: false,
             pkg_query:       String::new(),
             pkg_results:     vec![],
@@ -375,7 +378,7 @@ impl App {
 
         // Tab switching
         if k.tab_1.matches(&key)    { self.switch_tab(Tab::BuildRun); return; }
-        if k.tab_2.matches(&key)    { self.switch_tab(Tab::Package);  return; }
+        if k.tab_2.matches(&key)    { self.switch_tab(Tab::Crate);  return; }
         if k.tab_3.matches(&key)    { self.switch_tab(Tab::Test);     return; }
         if k.tab_next.matches(&key) { self.next_tab(); return; }
         if k.tab_prev.matches(&key) { self.prev_tab(); return; }
@@ -395,8 +398,8 @@ impl App {
         }
         if k.kill.matches(&key) { self.kill(); return; }
 
-        // Package tab actions
-        if self.tab == Tab::Package {
+        // Crate tab actions
+        if self.tab == Tab::Crate {
             if k.pkg_toggle.matches(&key) {
                 self.pkg_section = match self.pkg_section {
                     PkgSection::Installed => PkgSection::Search,
@@ -409,9 +412,24 @@ impl App {
                 self.pkg_section     = PkgSection::Search;
                 return;
             }
+            // Cycle the target dependency section for adding crates.
+            if k.pkg_profile.matches(&key) {
+                self.pkg_add_kind = match self.pkg_add_kind {
+                    DepKind::Normal => DepKind::Dev,
+                    DepKind::Dev    => DepKind::Build,
+                    DepKind::Build  => DepKind::Normal,
+                };
+                return;
+            }
             if k.pkg_remove.matches(&key) && self.pkg_section == PkgSection::Installed {
                 if let Some(dep) = self.pkg_deps.get(self.pkg_sel_inst).cloned() {
-                    self.run_cargo(vec!["remove".into(), dep.name]);
+                    // Remove from the section the crate actually lives in.
+                    let mut args = vec!["remove".to_string()];
+                    if let Some(flag) = dep.kind.flag() {
+                        args.push(flag.to_string());
+                    }
+                    args.push(dep.name);
+                    self.run_cargo(args);
                 }
                 return;
             }
@@ -428,8 +446,8 @@ impl App {
 
     fn next_tab(&mut self) {
         self.switch_tab(match self.tab {
-            Tab::BuildRun => Tab::Package,
-            Tab::Package  => Tab::Test,
+            Tab::BuildRun => Tab::Crate,
+            Tab::Crate  => Tab::Test,
             Tab::Test     => Tab::BuildRun,
         });
     }
@@ -437,8 +455,8 @@ impl App {
     fn prev_tab(&mut self) {
         self.switch_tab(match self.tab {
             Tab::BuildRun => Tab::Test,
-            Tab::Package  => Tab::BuildRun,
-            Tab::Test     => Tab::Package,
+            Tab::Crate  => Tab::BuildRun,
+            Tab::Test     => Tab::Crate,
         });
     }
 
@@ -450,7 +468,7 @@ impl App {
             Tab::Test => {
                 self.test_sel = clamp_move(self.test_sel, delta, self.test_cmds.len());
             }
-            Tab::Package => match self.pkg_section {
+            Tab::Crate => match self.pkg_section {
                 PkgSection::Installed => {
                     let n    = self.pkg_deps.len();
                     let prev = self.pkg_sel_inst;
@@ -507,10 +525,16 @@ impl App {
                     self.run_cargo(cmd.args);
                 }
             }
-            Tab::Package => {
+            Tab::Crate => {
                 if self.pkg_section == PkgSection::Search {
                     if let Some(r) = self.pkg_results.get(self.pkg_sel_search).cloned() {
-                        self.run_cargo(vec!["add".into(), r.name]);
+                        // Add to the currently selected dependency section.
+                        let mut args = vec!["add".to_string()];
+                        if let Some(flag) = self.pkg_add_kind.flag() {
+                            args.push(flag.to_string());
+                        }
+                        args.push(r.name);
+                        self.run_cargo(args);
                     }
                 }
             }

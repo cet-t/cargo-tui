@@ -39,7 +39,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     match app.tab {
         Tab::BuildRun => render_build_run(frame, app, chunks[1]),
-        Tab::Package  => render_package(frame, app, chunks[1]),
+        Tab::Crate    => render_crate(frame, app, chunks[1]),
         Tab::Test     => render_test(frame, app, chunks[1]),
     }
 
@@ -56,7 +56,7 @@ fn render_tabbar(frame: &mut Frame, app: &App, area: Rect) {
             Span::raw(" "),
         ]),
         Line::from(vec![
-            Span::raw(" Package "),
+            Span::raw(" Crate "),
             Span::styled("[2]", MUTED_STYLE),
             Span::raw(" "),
         ]),
@@ -88,8 +88,11 @@ fn render_statusbar(frame: &mut Frame, app: &App, area: Rect) {
         " Running...  [K] kill".to_string()
     } else {
         match app.tab {
-            Tab::Package => " [s] Search  [Enter] Add  [d] Remove  [Tab] Switch  [jk] Nav  [q] Quit".to_string(),
-            _            => " [Enter] Run  [r] Re-run  [K] Kill  []/[] Tab  [q] Quit".to_string(),
+            Tab::Crate => format!(
+                " [s] Search  [Enter] Add→{}  [p] Section  [d] Remove  [Tab] Switch  [q] Quit",
+                app.pkg_add_kind.section(),
+            ),
+            _          => " [Enter] Run  [r] Re-run  [K] Kill  []/[] Tab  [q] Quit".to_string(),
         }
     };
     frame.render_widget(
@@ -173,9 +176,9 @@ fn render_test(frame: &mut Frame, app: &App, area: Rect) {
     render_output(frame, app, right, " Output ");
 }
 
-// ── Package tab ───────────────────────────────────────────────
+// ── Crate tab ─────────────────────────────────────────────────
 
-fn render_package(frame: &mut Frame, app: &App, area: Rect) {
+fn render_crate(frame: &mut Frame, app: &App, area: Rect) {
     let [left, right] = split_lr(area, 42);
 
     // Left column: Installed (top 40%) + Search (bottom 60%)
@@ -206,17 +209,34 @@ fn render_pkg_installed(frame: &mut Frame, app: &App, area: Rect) {
         Style::default()
     };
 
-    let items: Vec<ListItem> = app
-        .pkg_deps
-        .iter()
-        .map(|d| {
-            ListItem::new(format!("  {:<28} {}", d.name, d.version))
-        })
-        .collect();
+    // Build the list grouped by dependency section, tracking where each
+    // selectable crate row lands so the highlight maps to `pkg_sel_inst`.
+    let mut items: Vec<ListItem> = vec![];
+    let mut sel_list_idx = 0usize;
+    let mut last_kind: Option<crate::workspace::DepKind> = None;
+    for (i, d) in app.pkg_deps.iter().enumerate() {
+        if last_kind != Some(d.kind) {
+            items.push(ListItem::new(Line::from(Span::styled(
+                format!("  [{}]", d.kind.section()),
+                HEADER_STYLE,
+            ))));
+            last_kind = Some(d.kind);
+        }
+        if i == app.pkg_sel_inst {
+            sel_list_idx = items.len();
+        }
+        items.push(ListItem::new(format!("    {:<26} {}", d.name, d.version)));
+    }
+    if items.is_empty() {
+        items.push(ListItem::new(Line::from(Span::styled(
+            "  (no dependencies)",
+            MUTED_STYLE,
+        ))));
+    }
 
     let mut state = ListState::default();
-    if active {
-        state.select(Some(app.pkg_sel_inst));
+    if active && !app.pkg_deps.is_empty() {
+        state.select(Some(sel_list_idx));
     }
 
     frame.render_stateful_widget(
