@@ -4,10 +4,10 @@ const { execFileSync } = require("child_process");
 const path = require("path");
 
 const PLATFORMS = {
-  "win32-x64":    { pkg: "cargo-tui-win32-x64",    bin: "cargo-tui.exe" },
-  "linux-x64":    { pkg: "cargo-tui-linux-x64",    bin: "cargo-tui"     },
-  "darwin-x64":   { pkg: "cargo-tui-darwin-x64",   bin: "cargo-tui"     },
-  "darwin-arm64": { pkg: "cargo-tui-darwin-arm64",  bin: "cargo-tui"     },
+  "win32-x64":    { pkg: "@trrne/cargo-tui-win32-x64",    bin: "cargo-tui.exe" },
+  "linux-x64":    { pkg: "@trrne/cargo-tui-linux-x64",    bin: "cargo-tui"     },
+  "darwin-x64":   { pkg: "@trrne/cargo-tui-darwin-x64",   bin: "cargo-tui"     },
+  "darwin-arm64": { pkg: "@trrne/cargo-tui-darwin-arm64",  bin: "cargo-tui"     },
 };
 
 const key = `${process.platform}-${process.arch}`;

@@ -1,5 +1,5 @@
 {
-  "name": "cargo-tui-win32-x64",
+  "name": "@trrne/cargo-tui-win32-x64",
   "version": "0.1.0",
   "description": "cargo-tui binary for Windows x64",
   "license": "MIT",

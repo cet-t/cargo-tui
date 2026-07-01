@@ -1,5 +1,5 @@
 {
-  "name": "cargo-tui-linux-x64",
+  "name": "@trrne/cargo-tui-linux-x64",
   "version": "0.1.0",
   "description": "cargo-tui binary for Linux x64",
   "license": "MIT",
