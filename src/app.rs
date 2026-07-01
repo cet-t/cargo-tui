@@ -386,6 +386,8 @@ impl App {
                 KeyCode::Enter     => {
                     self.pkg_sel_search = 0;
                     self.trigger_search();
+                    // Leave the input; results can be navigated, `s` re-activates.
+                    self.pkg_search_mode = false;
                 }
                 KeyCode::Backspace => { self.pkg_query.pop(); }
                 KeyCode::Up        => self.move_search_sel(-1),
