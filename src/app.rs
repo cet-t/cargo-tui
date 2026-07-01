@@ -5,6 +5,7 @@ use crate::{
     workspace::{Dep, DepKind, RunKind, RunTarget, WorkspaceInfo},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::cell::Cell;
 use std::path::PathBuf;
 use tokio::sync::{mpsc, oneshot};
 
@@ -21,6 +22,15 @@ pub enum Tab {
 pub enum PkgSection {
     Installed,
     Search,
+}
+
+/// Which pane currently has keyboard focus. The right pane (Output on the
+/// Build/Run and Test tabs, Description on the Crate tab) can be focused to
+/// scroll through its content with hjkl.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Focus {
+    Left,
+    Right,
 }
 
 // ── Command definitions ───────────────────────────────────────
@@ -168,6 +178,15 @@ pub struct App {
     // tabs
     pub tab: Tab,
 
+    // Focus + right-pane scrolling
+    pub focus:    Focus,
+    pub v_scroll: u16,
+    pub h_scroll: u16,
+    /// Right-pane viewport height / total content lines, updated during render
+    /// so scrolling can be clamped accurately.
+    pub right_view_lines:    Cell<u16>,
+    pub right_content_lines: Cell<u16>,
+
     // Command lists (Build/Run resolves against detected bin targets)
     pub build_run_cmds: Vec<Cmd>,
     pub test_cmds:      Vec<Cmd>,
@@ -206,6 +225,11 @@ impl App {
             ws_name: info.name,
             quit:    false,
             tab:     Tab::BuildRun,
+            focus:    Focus::Left,
+            v_scroll: 0,
+            h_scroll: 0,
+            right_view_lines:    Cell::new(0),
+            right_content_lines: Cell::new(0),
             build_run_cmds: build_run_cmds(&info.targets),
             test_cmds:      test_cmds(),
             br_sel:       0,
@@ -240,6 +264,10 @@ impl App {
         self.output = vec![format!("$ cargo {}", args.join(" "))];
         self.running   = true;
         self.last_args = Some(args.clone());
+        // New output: return focus to the command list and follow the tail.
+        self.focus    = Focus::Left;
+        self.v_scroll = 0;
+        self.h_scroll = 0;
 
         let (runner_tx, mut runner_rx) = mpsc::unbounded_channel::<RunnerEvent>();
         let kill_tx = crate::runner::spawn(args, self.root.clone(), runner_tx);
@@ -383,6 +411,25 @@ impl App {
         if k.tab_next.matches(&key) { self.next_tab(); return; }
         if k.tab_prev.matches(&key) { self.prev_tab(); return; }
 
+        // Right-pane scroll mode: hjkl (and arrows) scroll the Output/Description.
+        if self.focus == Focus::Right {
+            if k.down.matches(&key) || key.code == KeyCode::Down  { self.scroll_v(1);  return; }
+            if k.up.matches(&key)   || key.code == KeyCode::Up    { self.scroll_v(-1); return; }
+            if k.focus_right.matches(&key) || key.code == KeyCode::Right {
+                self.h_scroll = self.h_scroll.saturating_add(1);
+                return;
+            }
+            if k.focus_left.matches(&key) || key.code == KeyCode::Left {
+                // Scroll left; once at the left edge, hand focus back to the list.
+                if self.h_scroll > 0 { self.h_scroll -= 1; } else { self.focus = Focus::Left; }
+                return;
+            }
+            // Any other key falls through to the shared handlers below.
+        } else if k.focus_right.matches(&key) || key.code == KeyCode::Right {
+            self.focus_right();
+            return;
+        }
+
         // Navigation (arrow keys always work)
         if k.down.matches(&key) || key.code == KeyCode::Down { self.move_sel(1);  return; }
         if k.up.matches(&key)   || key.code == KeyCode::Up   { self.move_sel(-1); return; }
@@ -442,6 +489,31 @@ impl App {
         self.tab = tab;
         self.output.clear();
         self.test_results.clear();
+        self.focus    = Focus::Left;
+        self.v_scroll = 0;
+        self.h_scroll = 0;
+    }
+
+    /// Scroll the focused right pane vertically, clamped to its content.
+    fn scroll_v(&mut self, delta: i32) {
+        let max = self
+            .right_content_lines
+            .get()
+            .saturating_sub(self.right_view_lines.get());
+        let next = (self.v_scroll as i32 + delta).clamp(0, max as i32);
+        self.v_scroll = next as u16;
+    }
+
+    /// Move focus into the right pane, starting at the current tail so the view
+    /// does not jump when following live output.
+    fn focus_right(&mut self) {
+        self.focus = Focus::Right;
+        let bottom = self
+            .right_content_lines
+            .get()
+            .saturating_sub(self.right_view_lines.get());
+        self.v_scroll = bottom;
+        self.h_scroll = 0;
     }
 
     fn next_tab(&mut self) {
@@ -563,6 +635,47 @@ mod tests {
             .filter(|c| c.section == section)
             .map(|c| c.args.clone())
             .collect()
+    }
+
+    fn test_app() -> App {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let info = WorkspaceInfo {
+            name: "t".into(),
+            root: PathBuf::from("."),
+            deps: vec![],
+            targets: vec![],
+        };
+        App::new(info, crate::config::KeyConfig::default(), tx)
+    }
+
+    #[test]
+    fn focus_right_starts_at_tail_and_scroll_clamps() {
+        let mut app = test_app();
+        app.right_content_lines.set(100);
+        app.right_view_lines.set(10);
+
+        app.focus_right();
+        assert_eq!(app.focus, Focus::Right);
+        assert_eq!(app.v_scroll, 90); // tail = content - view
+
+        app.scroll_v(1);            // already at bottom -> clamped
+        assert_eq!(app.v_scroll, 90);
+        app.scroll_v(-5);
+        assert_eq!(app.v_scroll, 85);
+        app.scroll_v(-1000);        // clamped at top
+        assert_eq!(app.v_scroll, 0);
+    }
+
+    #[test]
+    fn switch_tab_resets_focus_and_scroll() {
+        let mut app = test_app();
+        app.focus = Focus::Right;
+        app.v_scroll = 42;
+        app.h_scroll = 7;
+        app.switch_tab(Tab::Test);
+        assert_eq!(app.focus, Focus::Left);
+        assert_eq!(app.v_scroll, 0);
+        assert_eq!(app.h_scroll, 0);
     }
 
     #[test]

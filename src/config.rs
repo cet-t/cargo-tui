@@ -114,6 +114,10 @@ pub struct KeyConfig {
     pub down:       KeyBind,
     /// Move selection up
     pub up:         KeyBind,
+    /// Focus the right pane (Output/Description); when focused, scroll right
+    pub focus_right: KeyBind,
+    /// Scroll left in the right pane; at the left edge, return focus to the list
+    pub focus_left:  KeyBind,
     /// Run the selected command / add the selected crate
     pub run:        KeyBind,
     /// Re-run the last command
@@ -141,6 +145,8 @@ impl Default for KeyConfig {
             tab_prev:   KeyBind::char('['),
             down:       KeyBind::char('j'),
             up:         KeyBind::char('k'),
+            focus_right: KeyBind::char('l'),
+            focus_left:  KeyBind::char('h'),
             run:        KeyBind::code(KeyCode::Enter),
             rerun:      KeyBind::char('r'),
             kill:       KeyBind::char('K'),

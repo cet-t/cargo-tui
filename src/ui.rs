@@ -1,5 +1,5 @@
 use crate::{
-    app::{App, PkgSection, Tab},
+    app::{App, Focus, PkgSection, Tab},
     crates_io::{CrateDetail, fmt_downloads},
 };
 use ratatui::{
@@ -84,15 +84,17 @@ fn render_tabbar(frame: &mut Frame, app: &App, area: Rect) {
 fn render_statusbar(frame: &mut Frame, app: &App, area: Rect) {
     let text = if app.pkg_search_mode {
         " Searching: [Esc/Enter] done  [BS] delete".to_string()
+    } else if app.focus == Focus::Right {
+        " Scroll: [hjkl] move  [h] back to list".to_string()
     } else if app.running {
-        " Running...  [K] kill".to_string()
+        " Running...  [l] focus output  [K] kill".to_string()
     } else {
         match app.tab {
             Tab::Crate => format!(
-                " [s] Search  [Enter] Add→{}  [p] Section  [d] Remove  [Tab] Switch  [q] Quit",
+                " [s] Search  [Enter] Add→{}  [p] Section  [d] Remove  [l] Focus  [q] Quit",
                 app.pkg_add_kind.section(),
             ),
-            _          => " [Enter] Run  [r] Re-run  [K] Kill  []/[] Tab  [q] Quit".to_string(),
+            _          => " [Enter] Run  [r] Re-run  [l] Focus output  [K] Kill  [q] Quit".to_string(),
         }
     };
     frame.render_widget(
@@ -198,7 +200,7 @@ fn render_crate(frame: &mut Frame, app: &App, area: Rect) {
         PkgSection::Installed => app.pkg_detail_inst.as_ref(),
         PkgSection::Search    => app.pkg_detail_srch.as_ref(),
     };
-    render_pkg_detail(frame, detail, right);
+    render_pkg_detail(frame, app, detail, right);
 }
 
 fn render_pkg_installed(frame: &mut Frame, app: &App, area: Rect) {
@@ -317,10 +319,16 @@ fn render_pkg_search(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-fn render_pkg_detail(frame: &mut Frame, detail: Option<&CrateDetail>, area: Rect) {
-    let block = Block::default().borders(Borders::ALL).title(" Detail ");
+fn render_pkg_detail(frame: &mut Frame, app: &App, detail: Option<&CrateDetail>, area: Rect) {
+    let focused = app.focus == Focus::Right;
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(right_border_style(focused))
+        .title(" Detail ");
 
     let Some(d) = detail else {
+        app.right_content_lines.set(0);
+        app.right_view_lines.set(area.height.saturating_sub(2));
         frame.render_widget(
             Paragraph::new(Span::styled("  (select an item)", MUTED_STYLE)).block(block),
             area,
@@ -368,9 +376,15 @@ fn render_pkg_detail(frame: &mut Frame, detail: Option<&CrateDetail>, area: Rect
         lines.push(Line::from(Span::styled(&d.repository, MUTED_STYLE)));
     }
 
+    let inner_h = area.height.saturating_sub(2);
+    app.right_content_lines.set(lines.len() as u16);
+    app.right_view_lines.set(inner_h);
+    let scroll_y = if focused { app.v_scroll } else { 0 };
+
     frame.render_widget(
         Paragraph::new(Text::from(lines))
             .block(block)
+            .scroll((scroll_y, 0))
             .wrap(Wrap { trim: false }),
         area,
     );
@@ -398,14 +412,34 @@ fn render_output(frame: &mut Frame, app: &App, area: Rect, title: &str) {
 
     let total = lines.len() as u16;
     let inner_h = area.height.saturating_sub(2);
-    let scroll = total.saturating_sub(inner_h);
+    app.right_content_lines.set(total);
+    app.right_view_lines.set(inner_h);
+
+    let focused = app.focus == Focus::Right;
+    // Follow the tail unless the pane is focused for manual scrolling.
+    let scroll_y = if focused { app.v_scroll } else { total.saturating_sub(inner_h) };
+    let scroll_x = if focused { app.h_scroll } else { 0 };
 
     frame.render_widget(
         Paragraph::new(Text::from(lines))
-            .block(Block::default().borders(Borders::ALL).title(title))
-            .scroll((scroll, 0)),
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(right_border_style(focused))
+                    .title(title),
+            )
+            .scroll((scroll_y, scroll_x)),
         area,
     );
+}
+
+/// Border style for the right pane: highlighted when it holds focus.
+fn right_border_style(focused: bool) -> Style {
+    if focused {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default()
+    }
 }
 
 // ── Utilities ─────────────────────────────────────────────────
