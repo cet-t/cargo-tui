@@ -14,9 +14,9 @@
     "build": "cargo build --release"
   },
   "optionalDependencies": {
-    "@cargo-tui/win32-x64":   "0.1.0",
-    "@cargo-tui/linux-x64":   "0.1.0",
-    "@cargo-tui/darwin-x64":  "0.1.0",
-    "@cargo-tui/darwin-arm64": "0.1.0"
+    "cargo-tui-win32-x64":   "0.1.0",
+    "cargo-tui-linux-x64":   "0.1.0",
+    "cargo-tui-darwin-x64":  "0.1.0",
+    "cargo-tui-darwin-arm64": "0.1.0"
   }
 }
