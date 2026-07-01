@@ -54,6 +54,9 @@ jobs:
     name: Publish to npm
     needs: build
     runs-on: ubuntu-latest
+    # NPM_TOKEN is stored as an *environment* secret (environment named "NPM_TOKEN"),
+    # not a repository secret. This declaration makes ${{ secrets.NPM_TOKEN }} resolve.
+    environment: NPM_TOKEN
     steps:
       - uses: actions/checkout@v4
 
