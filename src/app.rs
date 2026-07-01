@@ -300,6 +300,19 @@ impl App {
         });
     }
 
+    /// Reload the installed-crate list from Cargo.toml (after add/remove),
+    /// keeping the selection in range and refreshing the detail panel.
+    pub fn refresh_deps(&mut self) {
+        self.pkg_deps = crate::workspace::load_deps(&self.root);
+        if self.pkg_sel_inst >= self.pkg_deps.len() {
+            self.pkg_sel_inst = self.pkg_deps.len().saturating_sub(1);
+        }
+        self.pkg_detail_inst = None;
+        if let Some(dep) = self.pkg_deps.get(self.pkg_sel_inst).cloned() {
+            self.fetch_detail(dep.name, dep.version, false);
+        }
+    }
+
     /// Trigger a debounce-free crates.io search for the current query.
     pub fn trigger_search(&mut self) {
         if self.pkg_query.is_empty() {
@@ -348,6 +361,17 @@ impl App {
                 let icon = if code == 0 { "✓" } else { "✗" };
                 self.output.push(String::new());
                 self.output.push(format!("  {} exit code: {}", icon, code));
+
+                // Refresh the installed list right after a successful add/remove.
+                let mutated_deps = self
+                    .last_args
+                    .as_ref()
+                    .and_then(|a| a.first())
+                    .map(|c| c == "add" || c == "remove")
+                    .unwrap_or(false);
+                if code == 0 && mutated_deps {
+                    self.refresh_deps();
+                }
             }
 
             Event::SearchResult(results) => {

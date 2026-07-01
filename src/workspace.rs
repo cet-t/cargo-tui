@@ -96,9 +96,31 @@ pub fn load(root: &Path) -> Result<WorkspaceInfo, Error> {
 
     let name = manifest
         .package
-        .map(|p| p.name)
+        .as_ref()
+        .map(|p| p.name.clone())
         .unwrap_or_else(|| root.file_name().unwrap_or_default().to_string_lossy().into());
 
+    let deps = deps_from_manifest(&manifest);
+    let targets = detect_targets(root);
+
+    Ok(WorkspaceInfo { name, root: root.to_path_buf(), deps, targets })
+}
+
+/// Re-read just the dependency list from `<root>/Cargo.toml`. Used to refresh
+/// the installed-crate view after `cargo add` / `cargo remove`. Returns an
+/// empty list if the manifest is missing or unparsable.
+pub fn load_deps(root: &Path) -> Vec<Dep> {
+    let Ok(content) = std::fs::read_to_string(root.join("Cargo.toml")) else {
+        return Vec::new();
+    };
+    match toml::from_str::<CargoToml>(&content) {
+        Ok(manifest) => deps_from_manifest(&manifest),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Collect and sort dependencies from a parsed manifest, tagged by section.
+fn deps_from_manifest(manifest: &CargoToml) -> Vec<Dep> {
     let mut deps = Vec::new();
     let sections = [
         (DepKind::Normal, &manifest.dependencies),
@@ -121,13 +143,8 @@ pub fn load(root: &Path) -> Result<WorkspaceInfo, Error> {
         }
     }
     // Sort by section (normal, dev, build) then name so the grouped view is stable.
-    deps.sort_by(|a, b| {
-        (a.kind as u8, &a.name).cmp(&(b.kind as u8, &b.name))
-    });
-
-    let targets = detect_targets(root);
-
-    Ok(WorkspaceInfo { name, root: root.to_path_buf(), deps, targets })
+    deps.sort_by(|a, b| (a.kind as u8, &a.name).cmp(&(b.kind as u8, &b.name)));
+    deps
 }
 
 /// Enumerate all runnable targets (bins and examples) across workspace members
