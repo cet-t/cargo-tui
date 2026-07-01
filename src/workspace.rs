@@ -8,11 +8,19 @@ pub struct Dep {
     pub version: String,
 }
 
-/// A runnable binary target discovered in the workspace.
+/// Kind of a runnable cargo target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunKind {
+    Bin,
+    Example,
+}
+
+/// A runnable target (binary or example) discovered in the workspace.
 #[derive(Debug, Clone)]
-pub struct BinTarget {
+pub struct RunTarget {
     pub package: String,
     pub name: String,
+    pub kind: RunKind,
 }
 
 #[derive(Debug, Clone)]
@@ -20,7 +28,7 @@ pub struct WorkspaceInfo {
     pub name: String,
     pub root: PathBuf,
     pub deps: Vec<Dep>,
-    pub bins: Vec<BinTarget>,
+    pub targets: Vec<RunTarget>,
 }
 
 #[derive(Deserialize)]
@@ -80,15 +88,15 @@ pub fn load(root: &Path) -> Result<WorkspaceInfo, Error> {
     }
     deps.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let bins = detect_bins(root);
+    let targets = detect_targets(root);
 
-    Ok(WorkspaceInfo { name, root: root.to_path_buf(), deps, bins })
+    Ok(WorkspaceInfo { name, root: root.to_path_buf(), deps, targets })
 }
 
-/// Enumerate all binary targets across workspace members via `cargo metadata`.
-/// Returns an empty vec if cargo is unavailable or the project has no bins
-/// (e.g. a library-only crate).
-fn detect_bins(root: &Path) -> Vec<BinTarget> {
+/// Enumerate all runnable targets (bins and examples) across workspace members
+/// via `cargo metadata`. Returns an empty vec if cargo is unavailable or the
+/// project has nothing runnable (e.g. a library-only crate with no examples).
+fn detect_targets(root: &Path) -> Vec<RunTarget> {
     let output = std::process::Command::new("cargo")
         .args(["metadata", "--no-deps", "--format-version", "1"])
         .current_dir(root)
@@ -104,27 +112,36 @@ fn detect_bins(root: &Path) -> Vec<BinTarget> {
         Err(_) => return Vec::new(),
     };
 
-    let mut bins = Vec::new();
+    let mut targets = Vec::new();
     let Some(packages) = meta.get("packages").and_then(|v| v.as_array()) else {
-        return bins;
+        return targets;
     };
     for pkg in packages {
         let pkg_name = pkg.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let Some(targets) = pkg.get("targets").and_then(|v| v.as_array()) else {
+        let Some(pkg_targets) = pkg.get("targets").and_then(|v| v.as_array()) else {
             continue;
         };
-        for target in targets {
-            let is_bin = target
-                .get("kind")
-                .and_then(|v| v.as_array())
-                .map(|kinds| kinds.iter().any(|k| k.as_str() == Some("bin")))
-                .unwrap_or(false);
-            if is_bin {
+        for target in pkg_targets {
+            let kinds = target.get("kind").and_then(|v| v.as_array());
+            let kind = kinds.and_then(|ks| {
+                if ks.iter().any(|k| k.as_str() == Some("bin")) {
+                    Some(RunKind::Bin)
+                } else if ks.iter().any(|k| k.as_str() == Some("example")) {
+                    Some(RunKind::Example)
+                } else {
+                    None
+                }
+            });
+            if let Some(kind) = kind {
                 if let Some(name) = target.get("name").and_then(|v| v.as_str()) {
-                    bins.push(BinTarget { package: pkg_name.clone(), name: name.to_string() });
+                    targets.push(RunTarget {
+                        package: pkg_name.clone(),
+                        name: name.to_string(),
+                        kind,
+                    });
                 }
             }
         }
     }
-    bins
+    targets
 }

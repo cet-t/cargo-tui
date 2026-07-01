@@ -2,7 +2,7 @@ use crate::{
     config::KeyConfig,
     crates_io::{CrateDetail, CrateInfo},
     runner::RunnerEvent,
-    workspace::{BinTarget, Dep, WorkspaceInfo},
+    workspace::{Dep, RunKind, RunTarget, WorkspaceInfo},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
@@ -50,23 +50,30 @@ impl Cmd {
 }
 
 /// Build the Build/Run command list, resolving `run` entries against the
-/// binary targets discovered in the workspace so `cargo run` never fails with
-/// "a bin target must be available" or an ambiguous-binary error.
-pub fn build_run_cmds(bins: &[BinTarget]) -> Vec<Cmd> {
+/// runnable targets (bins and examples) discovered in the workspace so
+/// `cargo run` never fails with "a bin target must be available" or an
+/// ambiguous-target error.
+pub fn build_run_cmds(targets: &[RunTarget]) -> Vec<Cmd> {
+    let bins: Vec<&RunTarget>     = targets.iter().filter(|t| t.kind == RunKind::Bin).collect();
+    let examples: Vec<&RunTarget> = targets.iter().filter(|t| t.kind == RunKind::Example).collect();
+
     let mut cmds = vec![
         Cmd::new("build",            &["build"],              None,           "BUILD"),
         Cmd::new("build --release",  &["build", "--release"], None,           "BUILD"),
         Cmd::new("build --target …", &["build", "--target"],  Some("target"), "BUILD"),
     ];
 
-    match bins {
-        // Library-only crate (or a workspace with no bin members): nothing to run.
-        [] => cmds.push(Cmd::new(
+    // ── RUN section (binaries) ───────────────────────────────────
+    match bins.as_slice() {
+        // No bins at all. Show a placeholder only when there is also nothing
+        // else to run; otherwise the EXAMPLES section carries the runnables.
+        [] if examples.is_empty() => cmds.push(Cmd::new(
             "run (no binary target)",
             &[NO_BIN_SENTINEL],
             None,
             "RUN",
         )),
+        [] => {}
         // Exactly one binary: plain run/run --release, targeting it explicitly.
         [b] => {
             cmds.push(Cmd::new("run",           &["run", "--bin", &b.name],              None, "RUN"));
@@ -91,6 +98,24 @@ pub fn build_run_cmds(bins: &[BinTarget]) -> Vec<Cmd> {
                 ));
             }
         }
+    }
+
+    // ── EXAMPLES section (examples/*.rs) ─────────────────────────
+    for e in &examples {
+        cmds.push(Cmd::new(
+            &format!("run --example {}", e.name),
+            &["run", "-p", &e.package, "--example", &e.name],
+            None,
+            "EXAMPLES",
+        ));
+    }
+    for e in &examples {
+        cmds.push(Cmd::new(
+            &format!("run --release --example {}", e.name),
+            &["run", "--release", "-p", &e.package, "--example", &e.name],
+            None,
+            "EXAMPLES",
+        ));
     }
 
     cmds.extend([
@@ -179,7 +204,7 @@ impl App {
             ws_name: info.name,
             quit:    false,
             tab:     Tab::BuildRun,
-            build_run_cmds: build_run_cmds(&info.bins),
+            build_run_cmds: build_run_cmds(&info.targets),
             test_cmds:      test_cmds(),
             br_sel:       0,
             test_sel:     0,
@@ -502,43 +527,76 @@ fn clamp_move(cur: usize, delta: i32, len: usize) -> usize {
 mod tests {
     use super::*;
 
-    fn run_rows(cmds: &[Cmd]) -> Vec<(String, Vec<String>)> {
+    fn bin(pkg: &str, name: &str) -> RunTarget {
+        RunTarget { package: pkg.into(), name: name.into(), kind: RunKind::Bin }
+    }
+    fn example(pkg: &str, name: &str) -> RunTarget {
+        RunTarget { package: pkg.into(), name: name.into(), kind: RunKind::Example }
+    }
+
+    fn rows(cmds: &[Cmd], section: &str) -> Vec<Vec<String>> {
         cmds.iter()
-            .filter(|c| c.section == "RUN")
-            .map(|c| (c.label.clone(), c.args.clone()))
+            .filter(|c| c.section == section)
+            .map(|c| c.args.clone())
             .collect()
     }
 
     #[test]
-    fn no_bin_shows_placeholder_not_cargo_run() {
-        let rows = run_rows(&build_run_cmds(&[]));
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].1, vec![NO_BIN_SENTINEL.to_string()]);
+    fn nothing_runnable_shows_placeholder() {
+        let run = rows(&build_run_cmds(&[]), "RUN");
+        assert_eq!(run.len(), 1);
+        assert_eq!(run[0], vec![NO_BIN_SENTINEL.to_string()]);
         // The placeholder must never be a real `cargo run` invocation.
-        assert!(!rows[0].1.contains(&"run".to_string()));
+        assert!(!run[0].contains(&"run".to_string()));
     }
 
     #[test]
     fn single_bin_targets_it_explicitly() {
-        let bins = vec![BinTarget { package: "app".into(), name: "app".into() }];
-        let rows = run_rows(&build_run_cmds(&bins));
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].1, vec!["run", "--bin", "app"]);
-        assert_eq!(rows[1].1, vec!["run", "--release", "--bin", "app"]);
+        let run = rows(&build_run_cmds(&[bin("app", "app")]), "RUN");
+        assert_eq!(run, vec![
+            vec!["run", "--bin", "app"],
+            vec!["run", "--release", "--bin", "app"],
+        ]);
     }
 
     #[test]
     fn multiple_bins_get_one_row_each() {
-        let bins = vec![
-            BinTarget { package: "w".into(), name: "alpha".into() },
-            BinTarget { package: "w".into(), name: "beta".into() },
-        ];
-        let rows = run_rows(&build_run_cmds(&bins));
-        // 2 bins × (debug + release) = 4 run rows
-        assert_eq!(rows.len(), 4);
-        assert_eq!(rows[0].1, vec!["run", "-p", "w", "--bin", "alpha"]);
-        assert_eq!(rows[1].1, vec!["run", "-p", "w", "--bin", "beta"]);
-        assert_eq!(rows[2].1, vec!["run", "--release", "-p", "w", "--bin", "alpha"]);
-        assert_eq!(rows[3].1, vec!["run", "--release", "-p", "w", "--bin", "beta"]);
+        let run = rows(&build_run_cmds(&[bin("w", "alpha"), bin("w", "beta")]), "RUN");
+        assert_eq!(run, vec![
+            vec!["run", "-p", "w", "--bin", "alpha"],
+            vec!["run", "-p", "w", "--bin", "beta"],
+            vec!["run", "--release", "-p", "w", "--bin", "alpha"],
+            vec!["run", "--release", "-p", "w", "--bin", "beta"],
+        ]);
+    }
+
+    #[test]
+    fn examples_produce_run_example_rows() {
+        let ex = rows(&build_run_cmds(&[example("demo", "main")]), "EXAMPLES");
+        assert_eq!(ex, vec![
+            vec!["run", "-p", "demo", "--example", "main"],
+            vec!["run", "--release", "-p", "demo", "--example", "main"],
+        ]);
+    }
+
+    #[test]
+    fn examples_without_bins_do_not_show_placeholder() {
+        let cmds = build_run_cmds(&[example("demo", "main")]);
+        // No RUN placeholder when there is a runnable example.
+        assert!(rows(&cmds, "RUN").is_empty());
+        assert_eq!(rows(&cmds, "EXAMPLES").len(), 2);
+    }
+
+    #[test]
+    fn bins_and_examples_coexist() {
+        let cmds = build_run_cmds(&[bin("p", "app"), example("p", "main")]);
+        assert_eq!(rows(&cmds, "RUN"), vec![
+            vec!["run", "--bin", "app"],
+            vec!["run", "--release", "--bin", "app"],
+        ]);
+        assert_eq!(rows(&cmds, "EXAMPLES"), vec![
+            vec!["run", "-p", "p", "--example", "main"],
+            vec!["run", "--release", "-p", "p", "--example", "main"],
+        ]);
     }
 }
