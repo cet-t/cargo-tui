@@ -1,5 +1,5 @@
 use crate::{
-    app::{App, BUILD_RUN_CMDS, TEST_CMDS, PkgSection, Tab},
+    app::{App, PkgSection, Tab},
     crates_io::{CrateDetail, fmt_downloads},
 };
 use ratatui::{
@@ -106,8 +106,8 @@ fn render_build_run(frame: &mut Frame, app: &App, area: Rect) {
     // Left: command list with section headers
     let mut items: Vec<ListItem> = vec![];
     let mut last_section = "";
-    for cmd in BUILD_RUN_CMDS {
-        if cmd.section != last_section {
+    for cmd in &app.build_run_cmds {
+        if cmd.section.as_str() != last_section {
             if !last_section.is_empty() {
                 items.push(ListItem::new(Line::from(Span::styled("  ─────────────────", MUTED_STYLE))));
             }
@@ -115,13 +115,13 @@ fn render_build_run(frame: &mut Frame, app: &App, area: Rect) {
                 format!("  {}", cmd.section),
                 HEADER_STYLE,
             ))));
-            last_section = cmd.section;
+            last_section = cmd.section.as_str();
         }
         items.push(ListItem::new(format!("    {}", cmd.label)));
     }
 
     // Map command index to list item index (accounting for section headers)
-    let list_idx = cmd_to_list_idx(app.br_sel, BUILD_RUN_CMDS);
+    let list_idx = cmd_to_list_idx(app.br_sel, &app.build_run_cmds);
     let mut state = ListState::default().with_selected(Some(list_idx));
     frame.render_stateful_widget(
         List::new(items)
@@ -143,7 +143,7 @@ fn render_test(frame: &mut Frame, app: &App, area: Rect) {
 
     let mut items: Vec<ListItem> = vec![];
     items.push(ListItem::new(Line::from(Span::styled("  COMMANDS", HEADER_STYLE))));
-    for cmd in TEST_CMDS {
+    for cmd in &app.test_cmds {
         items.push(ListItem::new(format!("    {}", cmd.label)));
     }
 
@@ -407,12 +407,12 @@ fn cmd_to_list_idx(cmd_idx: usize, cmds: &[crate::app::Cmd]) -> usize {
     let mut offset = 0usize;
     let mut last_section = "";
     for (i, cmd) in cmds.iter().enumerate() {
-        if cmd.section != last_section {
+        if cmd.section.as_str() != last_section {
             if !last_section.is_empty() {
                 offset += 1; // separator
             }
             offset += 1; // header
-            last_section = cmd.section;
+            last_section = cmd.section.as_str();
         }
         if i == cmd_idx {
             return offset;

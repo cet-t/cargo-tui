@@ -2,7 +2,7 @@ use crate::{
     config::KeyConfig,
     crates_io::{CrateDetail, CrateInfo},
     runner::RunnerEvent,
-    workspace::{Dep, WorkspaceInfo},
+    workspace::{BinTarget, Dep, WorkspaceInfo},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
@@ -25,37 +25,95 @@ pub enum PkgSection {
 
 // ── Command definitions ───────────────────────────────────────
 
+/// Sentinel first-arg used for the placeholder shown when a project has no
+/// runnable binary target. Recognized specially in `do_run`.
+pub const NO_BIN_SENTINEL: &str = "__nobin__";
+
 #[derive(Clone)]
 pub struct Cmd {
-    pub label:   &'static str,
-    pub args:    &'static [&'static str],
+    pub label:   String,
+    pub args:    Vec<String>,
     /// If set, prompt the user for additional input before running.
-    pub prompt:  Option<&'static str>,
-    pub section: &'static str,
+    pub prompt:  Option<String>,
+    pub section: String,
 }
 
-pub const BUILD_RUN_CMDS: &[Cmd] = &[
-    Cmd { label: "build",             args: &["build"],              prompt: None,           section: "BUILD" },
-    Cmd { label: "build --release",   args: &["build", "--release"], prompt: None,           section: "BUILD" },
-    Cmd { label: "build --target …",  args: &["build", "--target"],  prompt: Some("target"), section: "BUILD" },
-    Cmd { label: "run",               args: &["run"],                prompt: None,           section: "RUN"   },
-    Cmd { label: "run --release",     args: &["run", "--release"],   prompt: None,           section: "RUN"   },
-    Cmd { label: "run -- <args>",     args: &["run", "--"],          prompt: Some("args"),   section: "RUN"   },
-    Cmd { label: "fmt",               args: &["fmt"],                prompt: None,           section: "TOOLS" },
-    Cmd { label: "clippy",            args: &["clippy"],             prompt: None,           section: "TOOLS" },
-    Cmd { label: "check",             args: &["check"],              prompt: None,           section: "TOOLS" },
-    Cmd { label: "clean",             args: &["clean"],              prompt: None,           section: "TOOLS" },
-    Cmd { label: "doc --open",        args: &["doc", "--open"],      prompt: None,           section: "TOOLS" },
-    Cmd { label: "publish --dry-run", args: &["publish","--dry-run"],prompt: None,           section: "TOOLS" },
-    Cmd { label: "publish",           args: &["publish"],            prompt: None,           section: "TOOLS" },
-];
+impl Cmd {
+    fn new(label: &str, args: &[&str], prompt: Option<&str>, section: &str) -> Self {
+        Cmd {
+            label:   label.to_string(),
+            args:    args.iter().map(|s| s.to_string()).collect(),
+            prompt:  prompt.map(|s| s.to_string()),
+            section: section.to_string(),
+        }
+    }
+}
 
-pub const TEST_CMDS: &[Cmd] = &[
-    Cmd { label: "test (all)",     args: &["test"],            prompt: None,           section: "TEST" },
-    Cmd { label: "test --release", args: &["test","--release"],prompt: None,           section: "TEST" },
-    Cmd { label: "test <filter>",  args: &["test"],            prompt: Some("filter"), section: "TEST" },
-    Cmd { label: "test --no-run",  args: &["test","--no-run"], prompt: None,           section: "TEST" },
-];
+/// Build the Build/Run command list, resolving `run` entries against the
+/// binary targets discovered in the workspace so `cargo run` never fails with
+/// "a bin target must be available" or an ambiguous-binary error.
+pub fn build_run_cmds(bins: &[BinTarget]) -> Vec<Cmd> {
+    let mut cmds = vec![
+        Cmd::new("build",            &["build"],              None,           "BUILD"),
+        Cmd::new("build --release",  &["build", "--release"], None,           "BUILD"),
+        Cmd::new("build --target …", &["build", "--target"],  Some("target"), "BUILD"),
+    ];
+
+    match bins {
+        // Library-only crate (or a workspace with no bin members): nothing to run.
+        [] => cmds.push(Cmd::new(
+            "run (no binary target)",
+            &[NO_BIN_SENTINEL],
+            None,
+            "RUN",
+        )),
+        // Exactly one binary: plain run/run --release, targeting it explicitly.
+        [b] => {
+            cmds.push(Cmd::new("run",           &["run", "--bin", &b.name],              None, "RUN"));
+            cmds.push(Cmd::new("run --release", &["run", "--release", "--bin", &b.name], None, "RUN"));
+        }
+        // Multiple binaries: one row per binary so the user picks which to run.
+        many => {
+            for b in many {
+                cmds.push(Cmd::new(
+                    &format!("run {}", b.name),
+                    &["run", "-p", &b.package, "--bin", &b.name],
+                    None,
+                    "RUN",
+                ));
+            }
+            for b in many {
+                cmds.push(Cmd::new(
+                    &format!("run --release {}", b.name),
+                    &["run", "--release", "-p", &b.package, "--bin", &b.name],
+                    None,
+                    "RUN",
+                ));
+            }
+        }
+    }
+
+    cmds.extend([
+        Cmd::new("fmt",               &["fmt"],                 None, "TOOLS"),
+        Cmd::new("clippy",            &["clippy"],              None, "TOOLS"),
+        Cmd::new("check",             &["check"],               None, "TOOLS"),
+        Cmd::new("clean",             &["clean"],               None, "TOOLS"),
+        Cmd::new("doc --open",        &["doc", "--open"],       None, "TOOLS"),
+        Cmd::new("publish --dry-run", &["publish", "--dry-run"],None, "TOOLS"),
+        Cmd::new("publish",           &["publish"],             None, "TOOLS"),
+    ]);
+
+    cmds
+}
+
+pub fn test_cmds() -> Vec<Cmd> {
+    vec![
+        Cmd::new("test (all)",     &["test"],             None,           "TEST"),
+        Cmd::new("test --release", &["test", "--release"],None,           "TEST"),
+        Cmd::new("test <filter>",  &["test"],             Some("filter"), "TEST"),
+        Cmd::new("test --no-run",  &["test", "--no-run"], None,           "TEST"),
+    ]
+}
 
 // ── Events ────────────────────────────────────────────────────
 
@@ -84,6 +142,10 @@ pub struct App {
 
     // tabs
     pub tab: Tab,
+
+    // Command lists (Build/Run resolves against detected bin targets)
+    pub build_run_cmds: Vec<Cmd>,
+    pub test_cmds:      Vec<Cmd>,
 
     // Build/Run + Test shared output state
     pub br_sel:       usize,
@@ -117,6 +179,8 @@ impl App {
             ws_name: info.name,
             quit:    false,
             tab:     Tab::BuildRun,
+            build_run_cmds: build_run_cmds(&info.bins),
+            test_cmds:      test_cmds(),
             br_sel:       0,
             test_sel:     0,
             output:       vec![],
@@ -356,10 +420,10 @@ impl App {
     fn move_sel(&mut self, delta: i32) {
         match self.tab {
             Tab::BuildRun => {
-                self.br_sel = clamp_move(self.br_sel, delta, BUILD_RUN_CMDS.len());
+                self.br_sel = clamp_move(self.br_sel, delta, self.build_run_cmds.len());
             }
             Tab::Test => {
-                self.test_sel = clamp_move(self.test_sel, delta, TEST_CMDS.len());
+                self.test_sel = clamp_move(self.test_sel, delta, self.test_cmds.len());
             }
             Tab::Package => match self.pkg_section {
                 PkgSection::Installed => {
@@ -396,19 +460,26 @@ impl App {
     fn do_run(&mut self) {
         match self.tab {
             Tab::BuildRun => {
-                let cmd = &BUILD_RUN_CMDS[self.br_sel];
+                let cmd = self.build_run_cmds[self.br_sel].clone();
+                // Library-only project: explain instead of running a doomed `cargo run`.
+                if cmd.args.first().map(|s| s.as_str()) == Some(NO_BIN_SENTINEL) {
+                    self.output = vec![
+                        "  No binary target in this project.".to_string(),
+                        "  This looks like a library crate — there is nothing to run.".to_string(),
+                        "  Use build / check / test instead.".to_string(),
+                    ];
+                    return;
+                }
                 if cmd.prompt.is_none() {
-                    let args = cmd.args.iter().map(|s| s.to_string()).collect();
                     self.output.clear();
-                    self.run_cargo(args);
+                    self.run_cargo(cmd.args);
                 }
             }
             Tab::Test => {
-                let cmd = &TEST_CMDS[self.test_sel];
+                let cmd = self.test_cmds[self.test_sel].clone();
                 if cmd.prompt.is_none() {
-                    let args = cmd.args.iter().map(|s| s.to_string()).collect();
                     self.output.clear();
-                    self.run_cargo(args);
+                    self.run_cargo(cmd.args);
                 }
             }
             Tab::Package => {
@@ -425,4 +496,49 @@ impl App {
 fn clamp_move(cur: usize, delta: i32, len: usize) -> usize {
     if len == 0 { return 0; }
     (cur as i32 + delta).max(0).min(len as i32 - 1) as usize
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run_rows(cmds: &[Cmd]) -> Vec<(String, Vec<String>)> {
+        cmds.iter()
+            .filter(|c| c.section == "RUN")
+            .map(|c| (c.label.clone(), c.args.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn no_bin_shows_placeholder_not_cargo_run() {
+        let rows = run_rows(&build_run_cmds(&[]));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, vec![NO_BIN_SENTINEL.to_string()]);
+        // The placeholder must never be a real `cargo run` invocation.
+        assert!(!rows[0].1.contains(&"run".to_string()));
+    }
+
+    #[test]
+    fn single_bin_targets_it_explicitly() {
+        let bins = vec![BinTarget { package: "app".into(), name: "app".into() }];
+        let rows = run_rows(&build_run_cmds(&bins));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].1, vec!["run", "--bin", "app"]);
+        assert_eq!(rows[1].1, vec!["run", "--release", "--bin", "app"]);
+    }
+
+    #[test]
+    fn multiple_bins_get_one_row_each() {
+        let bins = vec![
+            BinTarget { package: "w".into(), name: "alpha".into() },
+            BinTarget { package: "w".into(), name: "beta".into() },
+        ];
+        let rows = run_rows(&build_run_cmds(&bins));
+        // 2 bins × (debug + release) = 4 run rows
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0].1, vec!["run", "-p", "w", "--bin", "alpha"]);
+        assert_eq!(rows[1].1, vec!["run", "-p", "w", "--bin", "beta"]);
+        assert_eq!(rows[2].1, vec!["run", "--release", "-p", "w", "--bin", "alpha"]);
+        assert_eq!(rows[3].1, vec!["run", "--release", "-p", "w", "--bin", "beta"]);
+    }
 }
